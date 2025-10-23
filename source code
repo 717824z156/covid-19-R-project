@@ -1,0 +1,109 @@
+install.packages(c("readr","dplyr","stringr","ggplot2","forecast","tseries","reticulate"))
+library(reticulate)
+library(readr)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(forecast)
+library(tseries)
+
+# Read the CSV file
+data <- read.csv("covid_19_usa_city.csv", header = TRUE)
+
+# View the first few rows
+head(data)
+# Columns to clean
+cols_to_clean <- c("Total.Cases", "New.Cases", "Total.Deaths", 
+                   "New.Deaths", "Active.Cases", "Total.Cases..1M.pop", 
+                   "Deaths..1M.pop", "Total.Tests", "Tests..1M.pop")
+
+# Remove commas, NAs, and convert to numeric
+covid_data[cols_to_clean] <- lapply(covid_data[cols_to_clean], function(x) {
+  x <- gsub(",", "", x)       # remove commas
+  x <- gsub("–|N/A| ", "", x) # remove dashes, N/A, spaces
+  as.numeric(x)               # convert to numeric
+})
+# Convert Date column to proper Date format
+covid_data$Date <- as.Date(covid_data$Date, format="%m-%d-%Y")
+
+# Optional: replace negative Active.Cases with NA
+covid_data$Active.Cases[covid_data$Active.Cases < 0] <- NA
+
+# Check structure and summary of cleaned dataset
+str(covid_data)
+summary(covid_data)
+head(covid_data)
+top_cities <- covid_data %>%
+  group_by(City) %>%
+  summarise(Total_Cases = max(Total.Cases, na.rm = TRUE)) %>%
+  arrange(desc(Total_Cases)) %>%
+  head(10)
+
+print(top_cities)
+# Add new metrics
+covid_data <- covid_data %>%
+  mutate(
+    Case_Fatality_Rate = (Total.Deaths / Total.Cases) * 100,
+    Recovery_Estimate = Total.Cases - Active.Cases - Total.Deaths,
+    Recovery_Rate = (Recovery_Estimate / Total.Cases) * 100,
+    Tests_per_Case = Total.Tests / Total.Cases
+  )
+
+# Check first few rows with metrics
+head(covid_data)
+# Make sure covid_data exists from previous cleaning steps
+# Filter data for New York
+ny_data <- covid_data %>% filter(City == "New York")
+
+# Check first few rows
+head(ny_data)
+library(stringr)
+
+# Trim leading/trailing spaces and remove non-printable characters
+covid_data$City <- str_squish(covid_data$City)  # removes extra spaces inside and outside
+covid_data$City <- str_replace_all(covid_data$City, "[^[:alnum:] [:space:]]", "") # remove special chars
+
+# Filter for New York (case-insensitive)
+ny_data <- covid_data %>% filter(str_to_lower(City) == "new york")
+
+# Verify
+nrow(ny_data)
+head(ny_data)
+
+# Suppose we take last 14 days as test set
+train_ts <- head(ny_ts, length(ny_ts) - 14)
+test_ts  <- tail(ny_ts, 14)
+
+# Fit model on train set
+model_train <- auto.arima(train_ts)
+
+# Forecast 14 days
+forecast_test <- forecast(model_train, h = 14)
+
+# Compute forecast accuracy against test set
+accuracy(forecast_test, test_ts)
+library(forecast)
+
+# Convert Total.Cases to time series
+ny_ts <- ts(ny_data$Total.Cases, frequency = 7)
+
+# Fit ARIMA model
+model <- auto.arima(ny_ts)
+
+# Forecast next 14 days
+ny_forecast <- forecast(model, h = 14)
+
+# In-sample accuracy
+in_sample_acc <- accuracy(model)
+print("In-sample accuracy:")
+print(in_sample_acc)
+
+# Optional: last 14 days comparison (if enough data)
+if(length(ny_ts) > 14){
+  train <- head(ny_ts, length(ny_ts)-14)
+  test  <- tail(ny_ts, 14)
+  test_forecast <- forecast(auto.arima(train), h = 14)
+  test_acc <- accuracy(test_forecast, test)
+  print("Forecast accuracy for last 14 days:")
+  print(test_acc)
+}
